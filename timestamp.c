@@ -62,7 +62,10 @@
 
 #include <sys/ioctl.h>
 #include <sys/stat.h>
-#include <sys/vfs.h>
+#ifndef __freebsd__
+# include <sys/vfs.h>
+#endif
+
 
 #if !defined(timespecisset) || \
     !defined(timespeccmp) || \
@@ -95,7 +98,22 @@
 #	endif
 #endif
 
-#ifdef __linux__
+#if defined(__freebsd__)
+#include <sys/types.h>
+#include <sys/user.h>
+#include <libutil.h>
+#include <stdio.h>
+
+static int
+proc_info(pid_t pid, int *ttynr, unsigned long long *starttime)
+{
+	struct kinfo_proc *ki = kinfo_getproc(pid);
+	*ttynr = ki->ki_tdev;
+	*starttime = ki->ki_start.tv_usec;
+	free(ki);
+	return 0;
+}
+#elif defined(__linux__)
 /* Use tty_nr from /proc/self/stat instead of using
  * ttyname(3), stdin, stdout and stderr are user
  * controllable and would allow to reuse timestamps
@@ -221,8 +239,13 @@ timestamp_check(int fd, int secs)
 
 	if (fstat(fd, &st) == -1)
 		err(1, "fstat");
+#ifdef __freebsd__
+	if (st.st_uid != 0 || st.st_gid != 0 || st.st_mode != (S_IFREG | 0000))
+		errx(1, "timestamp uid, gid or mode wrong");
+#else
 	if (st.st_uid != 0 || st.st_gid != getgid() || st.st_mode != (S_IFREG | 0000))
 		errx(1, "timestamp uid, gid or mode wrong");
+#endif
 
 	/* this timestamp was created but never set, invalid but no error */
 	if (!timespecisset(&st.st_atim) || !timespecisset(&st.st_mtim))
